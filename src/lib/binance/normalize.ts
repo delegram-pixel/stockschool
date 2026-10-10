@@ -1,5 +1,5 @@
 import type { RawRwaToken } from "./schemas";
-import { CHAIN_LABELS, DEFAULT_CHAIN_ID } from "./endpoints";
+import { CHAIN_LABELS, DEFAULT_CHAIN_ID } from "@/lib/chains";
 import type { DataProvenance, MarketStatus, ProviderId, TokenizedStock } from "@/types";
 
 /**
@@ -138,12 +138,6 @@ const EVM_ADDRESS = /^0x[a-fA-F0-9]{40}$/;
 
 export function isEvmAddress(value: unknown): value is string {
   return typeof value === "string" && EVM_ADDRESS.test(value);
-}
-
-/** Truncate for display while the full value stays available via title/copy. */
-export function truncateAddress(address: string, lead = 6, tail = 4): string {
-  if (address.length <= lead + tail + 2) return address;
-  return `${address.slice(0, lead)}…${address.slice(-tail)}`;
 }
 
 function firstString(...values: unknown[]): string | null {

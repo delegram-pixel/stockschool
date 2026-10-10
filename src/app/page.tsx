@@ -9,7 +9,7 @@ import { lessons, totalEstimatedMinutes } from "@/content/lessons";
 import { getAssetFeed } from "@/server/services/asset-service";
 import { formatCurrency, formatPercent } from "@/lib/calculations/money";
 import { comparePrices } from "@/lib/calculations/price-difference";
-import { truncateAddress } from "@/lib/binance/normalize";
+import { truncateAddress } from "@/lib/utils";
 
 export const revalidate = 60;
 

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { DEFAULT_PASS_MARK_PCT, quizFeedback, scoreQuestion, scoreQuiz } from "@/lib/learning/scoring";
-import type { Quiz, QuizQuestion } from "@/lib/learning/types";
+import type { Quiz } from "@/lib/learning/types";
 
 /**
  * Quiz scoring.

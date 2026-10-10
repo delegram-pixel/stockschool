@@ -182,7 +182,7 @@ export function validateSell(portfolio: Portfolio, order: OrderRequest): OrderEr
 
 function validateOrderInputs(order: OrderRequest): OrderError | null {
   const quantity = toDecimal(order.quantity);
-  if (quantity === null || !quantity.isPositive()) {
+  if (quantity === null || !quantity.greaterThan(0)) {
     return {
       code: "INVALID_QUANTITY",
       message: "Enter a quantity greater than zero.",
@@ -190,7 +190,7 @@ function validateOrderInputs(order: OrderRequest): OrderError | null {
   }
 
   const price = toDecimal(order.price);
-  if (price === null || !price.isPositive()) {
+  if (price === null || !price.greaterThan(0)) {
     return {
       code: "PRICE_UNAVAILABLE",
       message:
@@ -452,7 +452,7 @@ export function valuePortfolio(
 
     const unrealisedGain = marketValue ? marketValue.minus(costBasis) : null;
     const unrealisedGainPercent =
-      unrealisedGain && costBasis.isPositive() ? unrealisedGain.div(costBasis).times(100) : null;
+      unrealisedGain && costBasis.greaterThan(0) ? unrealisedGain.div(costBasis).times(100) : null;
 
     return { position, quantity, averageCost, price, marketValue, costBasis, unrealisedGain, unrealisedGainPercent };
   });
@@ -465,14 +465,16 @@ export function valuePortfolio(
     const value = h.marketValue ?? h.costBasis;
     return {
       ...h,
-      allocationPercent: allocationBase.isPositive() ? value.div(allocationBase).times(100) : null,
+      allocationPercent: allocationBase.greaterThan(0) ? value.div(allocationBase).times(100) : null,
     };
   });
 
   const totalValue = cash.plus(holdingsValue);
   const initial = toDecimal(portfolio.initialCashBalance) ?? new Decimal(0);
   const totalReturn = totalValue.minus(initial);
-  const totalReturnPercent = initial.isPositive() ? totalReturn.div(initial).times(100) : new Decimal(0);
+  const totalReturnPercent = initial.greaterThan(0)
+    ? totalReturn.div(initial).times(100)
+    : new Decimal(0);
 
   const unrealisedGain = holdingsValue.minus(
     holdings.reduce((sum, h) => sum.plus(h.marketValue ? h.costBasis : new Decimal(0)), new Decimal(0)),
@@ -488,7 +490,7 @@ export function valuePortfolio(
     totalValue,
     costBasis: costBasisTotal,
     unrealisedGain,
-    unrealisedGainPercent: pricedCostBasis.isPositive()
+    unrealisedGainPercent: pricedCostBasis.greaterThan(0)
       ? unrealisedGain.div(pricedCostBasis).times(100)
       : null,
     totalReturn,
@@ -519,7 +521,7 @@ export function computeRealisedGain(portfolio: Portfolio): Decimal {
 
     if (tx.action === "buy") {
       const newQty = current.quantity.plus(quantity);
-      const newAvg = newQty.isPositive()
+      const newAvg = newQty.greaterThan(0)
         ? current.quantity.times(current.averageCost).plus(quantity.times(price)).div(newQty)
         : new Decimal(0);
       basis.set(tx.assetId, { quantity: newQty, averageCost: newAvg });

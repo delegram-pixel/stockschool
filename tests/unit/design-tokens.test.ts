@@ -1,4 +1,5 @@
 import { readFileSync, readdirSync } from "node:fs";
+import { join, relative } from "node:path";
 import { describe, expect, it } from "vitest";
 
 /**
@@ -30,8 +31,19 @@ import { describe, expect, it } from "vitest";
  * inverts). All five are fixed; the rows below are what keeps them fixed.
  */
 
-const ROOT = new URL("../../", import.meta.url);
-const STYLESHEET = new URL("src/app/globals.css", ROOT);
+/**
+ * Paths are built from the working directory, not from `import.meta.url`.
+ *
+ * Resolving against `import.meta.url` does not survive this environment: under
+ * Vitest's jsdom environment the URL that comes out reaches `fs` with a scheme
+ * Node will not read, and the file dies at import time with `TypeError: The URL
+ * must be of scheme file` — before a single assertion runs, which is why it
+ * reports as a failed suite rather than a failed test. Vitest's working
+ * directory is the project root, which is the directory these paths were being
+ * computed against in the first place.
+ */
+const ROOT = process.cwd();
+const STYLESHEET = join(ROOT, "src/app/globals.css");
 
 /** Text, including the 12px mono captions, is held to the AA threshold. */
 const MIN_TEXT_CONTRAST = 4.5;
@@ -484,10 +496,10 @@ describe("tokens without a measured pair", () => {
  */
 const HARD_CODED = /\b(?:bg|text|border|ring|fill|stroke|decoration|from|to|outline)-(?:white|black)(?:\/\d+)?\b/;
 
-function sourceFiles(directory: URL): URL[] {
-  const found: URL[] = [];
+function sourceFiles(directory: string): string[] {
+  const found: string[] = [];
   for (const entry of readdirSync(directory, { withFileTypes: true })) {
-    const child = new URL(entry.name + (entry.isDirectory() ? "/" : ""), directory);
+    const child = join(directory, entry.name);
     if (entry.isDirectory()) found.push(...sourceFiles(child));
     else if (/\.tsx?$/.test(entry.name)) found.push(child);
   }
@@ -496,9 +508,9 @@ function sourceFiles(directory: URL): URL[] {
 
 describe("no hard-coded white or black in the interface", () => {
   it("uses `ink-inverse` rather than the `white` keyword", () => {
-    const offenders = sourceFiles(new URL("src/", ROOT))
+    const offenders = sourceFiles(join(ROOT, "src"))
       .filter((file) => HARD_CODED.test(stripComments(readFileSync(file, "utf8"))))
-      .map((file) => file.pathname.replace(ROOT.pathname, ""));
+      .map((file) => relative(ROOT, file));
 
     expect(offenders, "`white` cannot follow a token through the theme switch").toEqual([]);
   });

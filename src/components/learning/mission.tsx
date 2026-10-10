@@ -5,10 +5,9 @@ import Link from "next/link";
 import { ArrowRight, Check, Lightbulb } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { cn } from "@/lib/utils";
+import { cn, truncateAddress } from "@/lib/utils";
 import { Decimal, formatCurrency, formatPercent, toDecimal } from "@/lib/calculations/money";
 import { comparePrices, explainComparison } from "@/lib/calculations/price-difference";
-import { truncateAddress } from "@/lib/binance/normalize";
 import type { Mission } from "@/lib/learning/types";
 import type { TokenizedStock } from "@/types";
 

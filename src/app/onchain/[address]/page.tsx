@@ -55,10 +55,6 @@ function parseChainId(raw: string | string[] | undefined): SupportedChainId {
   return 56;
 }
 
-function firstParam(raw: string | string[] | undefined): string {
-  return (Array.isArray(raw) ? raw[0] : raw) ?? "";
-}
-
 export async function generateMetadata({
   params,
 }: {

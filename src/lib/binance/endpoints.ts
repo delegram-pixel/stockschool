@@ -20,22 +20,17 @@ import {
  *   Tx       : /tx/simulate
  */
 
-/** BNB Smart Chain. Most tokenized equities settle here. */
-export const DEFAULT_CHAIN_ID = Number(process.env.NEXT_PUBLIC_DEFAULT_CHAIN_ID ?? 56);
+/**
+ * Chain identity is defined in `@/lib/chains` and re-exported here so existing
+ * callers keep working. New code should import it from `@/lib/chains`
+ * directly.
+ *
+ * It moved because this module imports `./client`, so anything reachable from
+ * here is reachable from the signing layer — and from `node:crypto`.
+ */
+import { CHAIN_LABELS, CHAIN_NAMES, DEFAULT_CHAIN_ID } from "@/lib/chains";
 
-export const CHAIN_NAMES: Record<number, string> = {
-  1: "Ethereum",
-  56: "BNB Smart Chain",
-  8453: "Base",
-};
-
-/** `CT_501` is Solana and is not numeric — kept as a label only. */
-export const CHAIN_LABELS: Record<string, string> = {
-  "56": "BNB Smart Chain",
-  "1": "Ethereum",
-  "8453": "Base",
-  CT_501: "Solana",
-};
+export { CHAIN_LABELS, CHAIN_NAMES, DEFAULT_CHAIN_ID };
 
 // -----------------------------------------------------------------------------
 // RWA Data

@@ -1,4 +1,4 @@
-import { Decimal, toDecimal } from "@/lib/calculations/money";
+import { Decimal, isDecimalString, toDecimal } from "@/lib/calculations/money";
 
 /**
  * Token supply arithmetic.
@@ -32,6 +32,14 @@ export function scaleSupply(
 
   // A negative or fractional `decimals()` is not a token we can describe.
   if (!Number.isInteger(decimals) || decimals < 0 || decimals > 77) return null;
+
+  // A raw `uint256` out of an ABI is always plain digits, so anything else —
+  // exponential notation, a thousands separator, an empty string — means the
+  // value is not the shape we think it is. This matters because `toDecimal` is
+  // deliberately liberal and would parse `1e21` into a perfectly plausible,
+  // perfectly wrong supply. `isDecimalString` is the strict counterpart, and
+  // the same rule the storage layer holds its own bytes to.
+  if (!isDecimalString(rawSupply)) return null;
 
   const raw = toDecimal(rawSupply);
   if (raw === null || raw.isNegative()) return null;

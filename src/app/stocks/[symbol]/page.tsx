@@ -16,7 +16,7 @@ import {
   describeDifference,
   isNotableDifference,
 } from "@/lib/calculations/price-difference";
-import { formatPercent, formatQuantity } from "@/lib/calculations/money";
+import { formatQuantity } from "@/lib/calculations/money";
 import { getAssetBySymbol } from "@/server/services/asset-service";
 import type { TokenizedStock } from "@/types";
 

@@ -24,6 +24,22 @@ Decimal.set({
 
 export { Decimal };
 
+/**
+ * A trap worth naming once, here, because everything imports `Decimal` from
+ * this module.
+ *
+ * `decimal.js`'s `isPositive()` and `isNegative()` are **sign** tests, not
+ * magnitude ones. Zero carries a positive sign and `-0` a negative one, so
+ * `new Decimal(0).isPositive()` is `true` and `new Decimal(-0).isNegative()` is
+ * `true`. Code that reads `isPositive()` as "greater than zero" therefore lets
+ * zero through — and where that value is a divisor, it divides by zero and
+ * produces `NaN`, which then renders as a confident, wrong number on a screen
+ * about the learner's own money.
+ *
+ * So: `greaterThan(0)` when "greater than zero" is what you mean, and
+ * `isZero()` / `isNegative()` when the sign genuinely is the question.
+ */
+
 /** Anything we can safely turn into a Decimal. */
 export type Numeric = string | number | Decimal;
 
