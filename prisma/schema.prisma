@@ -1,0 +1,182 @@
+// =============================================================================
+// StockSchool — Prisma schema
+// =============================================================================
+// Run `yarn db:push` for a quick sync, or `yarn db:migrate` for a tracked
+// migration. See ARCHITECTURE.md § Persistence for the design rationale.
+//
+// Design note — identity without a login wall
+// -------------------------------------------
+// The PRD requires that people can start learning without creating an account.
+// So `User` doubles as an anonymous learner: rows are created on first visit
+// keyed by an opaque, httpOnly session cookie (`sessionKey`), with `email`
+// left null. When real authentication is added later, you claim the row by
+// setting `email`/`displayName` — no data migration needed.
+//
+// All financial columns are DECIMAL, never FLOAT. `Decimal` in application
+// code, `@db.Decimal(p, s)` at rest. See src/lib/calculations/money.ts.
+// =============================================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum ProgressStatus {
+  NOT_STARTED
+  IN_PROGRESS
+  COMPLETED
+}
+
+enum TradeAction {
+  BUY
+  SELL
+}
+
+/// An anonymous learner today; an authenticated account later.
+/// Never stores wallet keys, seed phrases, or anything we do not need.
+model User {
+  id          String   @id @default(uuid()) @db.Uuid
+  /// Opaque random token from an httpOnly cookie. Null once a real identity
+  /// (email) is attached and the user signs in on another device.
+  sessionKey  String?  @unique
+  email       String?  @unique
+  displayName String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  lessonProgress  LessonProgress[]
+  quizAttempts    QuizAttempt[]
+  missionProgress MissionProgress[]
+  portfolios      SimulationPortfolio[]
+
+  @@index([createdAt])
+}
+
+/// One row per lesson a learner has touched. Lesson *content* lives in
+/// version control (src/content/lessons) — this table only tracks state, so
+/// there is exactly one source of truth for the material itself.
+model LessonProgress {
+  id             String         @id @default(uuid()) @db.Uuid
+  userId         String         @db.Uuid
+  lessonSlug     String
+  status         ProgressStatus @default(NOT_STARTED)
+  currentSection String?
+  /// Highest quiz score achieved, as a percentage. Denormalised for fast
+  /// display; QuizAttempt rows remain the authoritative record.
+  bestScorePct   Decimal?       @db.Decimal(5, 2)
+  completedAt    DateTime?
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, lessonSlug])
+  @@index([lessonSlug])
+}
+
+/// Every quiz submission. Answers are re-validated on the server against the
+/// lesson definition — a client-supplied score is never trusted.
+model QuizAttempt {
+  id            String   @id @default(uuid()) @db.Uuid
+  userId        String   @db.Uuid
+  lessonSlug    String
+  quizId        String
+  score         Int
+  totalQuestions Int
+  scorePct      Decimal  @db.Decimal(5, 2)
+  /// JSON: [{ questionId, answer, correct }] — no personal data.
+  answers       Json
+  completedAt   DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, lessonSlug])
+  @@index([completedAt])
+}
+
+model MissionProgress {
+  id          String         @id @default(uuid()) @db.Uuid
+  userId      String         @db.Uuid
+  missionId   String
+  lessonSlug  String?
+  status      ProgressStatus @default(NOT_STARTED)
+  /// JSON: non-sensitive result metadata (e.g. { attempts, lastAnswer }).
+  result      Json?
+  completedAt DateTime?
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, missionId])
+  @@index([lessonSlug])
+}
+
+/// A hypothetical portfolio. Balances here are NEVER real money and are
+/// labelled as simulation everywhere they surface in the UI.
+model SimulationPortfolio {
+  id                 String   @id @default(uuid()) @db.Uuid
+  userId             String   @db.Uuid
+  name               String   @default("My simulated portfolio")
+  baseCurrency       String   @default("USD")
+  initialCashBalance Decimal  @db.Decimal(24, 8)
+  cashBalance        Decimal  @db.Decimal(24, 8)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  user         User                    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  positions    SimulationPosition[]
+  transactions SimulationTransaction[]
+
+  @@index([userId])
+}
+
+/// A simulated holding. `averageCost` is the running cost basis used for
+/// hypothetical P/L. Fully closed positions (quantity 0) are retained so the
+/// history stays explainable.
+model SimulationPosition {
+  id          String   @id @default(uuid()) @db.Uuid
+  portfolioId String   @db.Uuid
+  provider    String
+  assetId     String
+  symbol      String
+  quantity    Decimal  @db.Decimal(24, 8)
+  averageCost Decimal  @db.Decimal(24, 8)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  portfolio SimulationPortfolio @relation(fields: [portfolioId], references: [id], onDelete: Cascade)
+
+  @@unique([portfolioId, assetId])
+  @@index([assetId])
+}
+
+/// An audit trail of simulated actions. Deliberately has NO transactionHash
+/// column: inventing a hash for a simulation would imply a real chain
+/// transaction happened. Price provenance is recorded instead.
+model SimulationTransaction {
+  id             String      @id @default(uuid()) @db.Uuid
+  portfolioId    String      @db.Uuid
+  assetId        String
+  symbol         String
+  action         TradeAction
+  quantity       Decimal     @db.Decimal(24, 8)
+  price          Decimal     @db.Decimal(24, 8)
+  grossAmount    Decimal     @db.Decimal(24, 8)
+  feeAmount      Decimal     @default(0) @db.Decimal(24, 8)
+  currency       String      @default("USD")
+  /// Which price fed the simulation: "onchain" | "reference". Keeps the
+  /// hypothetical result explainable after the fact.
+  priceSource    String
+  priceTimestamp DateTime?
+  createdAt      DateTime    @default(now())
+
+  portfolio SimulationPortfolio @relation(fields: [portfolioId], references: [id], onDelete: Cascade)
+
+  @@index([portfolioId, createdAt])
+  @@index([assetId])
+}
