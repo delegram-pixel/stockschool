@@ -1,6 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import { Fraunces, JetBrains_Mono, Manrope } from "next/font/google";
-import { Analytics } from "@vercel/analytics/next";
+import { SiteAnalytics } from "@/components/analytics";
 import { SiteHeader } from "@/components/navigation/site-header";
 import { SiteFooter } from "@/components/navigation/site-footer";
 import { ProgressProvider } from "@/components/providers/progress-provider";
@@ -121,30 +121,13 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           Page-view analytics, last in the body so it never delays the content
           above it.
 
-          Cookieless and free of cross-site identifiers, which is the only
-          reason it is here at all: this product tells learners in three separate
-          places that what they write stays on their device, and that promise is
-          not worth trading for a funnel chart. It counts which lessons get
-          opened, and nothing else.
-
-          `beforeSend` exists for one specific URL. The On-Chain Lab lives at
-          `/onchain/[address]`, and the address a learner pastes there may well
-          be their own wallet — public on-chain data, but still theirs, and not
-          something to hand to a third party just because they looked up their
-          own balance. The path is collapsed to the route pattern before it
-          leaves the browser, so the visit is still counted and the address is
-          not. If you would rather keep this file minimal, the block is
-          removable without touching anything else.
-
-          Left on the default mode, which reports from production deployments
-          rather than from `next dev`.
+          It is a client component rather than a direct <Analytics /> here
+          because `beforeSend` is a function, and a function cannot cross the
+          server/client boundary — this file must stay a server component, so
+          the filter lives in `@/components/analytics` instead. That file also
+          records what it filters and why.
         */}
-        <Analytics
-          beforeSend={(event) => {
-            const collapsed = event.url.replace(/\/onchain\/[^/?#]+/, "/onchain/[address]");
-            return collapsed === event.url ? event : { ...event, url: collapsed };
-          }}
-        />
+        <SiteAnalytics />
       </body>
     </html>
   );
