@@ -111,10 +111,26 @@ export function ProvenanceNotice({
               ? "The most recent refresh did not succeed, so these values may no longer reflect the market. Treat them as historical."
               : "These values come from a recent successful fetch but are not being refreshed live."}
         </p>
-        {isSample && (
+        {isSample && !reason && (
+          // `!reason` is the whole condition, and it is easy to get wrong.
+          //
+          // A reason is supplied exactly when credentials *were* configured and
+          // the call then failed. In that state these two names are already set,
+          // so printing them instructs the reader to do what they have just
+          // done — and the sentence above, which is the actual diagnosis, reads
+          // as a generic complaint rather than the answer. Worse, it sends them
+          // looking for a configuration problem when the fault is upstream.
+          //
+          // With no reason at all, the banner is true: nothing is configured.
+          //
+          // These names are load-bearing copy either way: they are the only
+          // instruction a reader gets, and they must match `isConfigured()` in
+          // `src/lib/binance/client.ts` exactly. A wrong name here fails
+          // silently — the app just keeps rendering this same banner, with no
+          // error to explain why nothing changed.
           <p className="text-ink-subtle">
             Set <code className="font-mono text-[0.75rem]">BINANCE_WEB3_API_KEY</code> and{" "}
-            <code className="font-mono text-[0.75rem]">BINANCE_WEB3_SECRET_KEY</code> to switch to
+            <code className="font-mono text-[0.75rem]">BINANCE_WEB3_API_SECRET</code> to switch to
             live data. The page will not change in any other way.
           </p>
         )}

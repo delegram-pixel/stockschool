@@ -20,6 +20,12 @@ import {
  * So the tests below are written per-mistake rather than per-function. Each one
  * reproduces a specific way the signature goes wrong and asserts that the
  * boundary catches it locally instead of costing a round trip.
+ *
+ * The paths in these fixtures are real ones, with the parameter names the live
+ * API actually accepts (`binanceChainId`, not `chainId`). Nothing here depends on
+ * that — the scheme is pure concatenation, so any string would test it equally —
+ * but a repository whose DX report is about parameter names should not be caught
+ * using the wrong one in its own examples.
  */
 
 describe("buildPreHash", () => {
@@ -28,9 +34,9 @@ describe("buildPreHash", () => {
       buildPreHash({
         timestamp: "2026-10-09T12:00:00.000Z",
         method: "GET",
-        requestPath: "/build/api/v1/dex/market/rwa/price?chainId=56&symbol=NVDA",
+        requestPath: "/build/api/v1/dex/market/rwa/price?binanceChainId=56",
       }),
-    ).toBe("2026-10-09T12:00:00.000ZGET/build/api/v1/dex/market/rwa/price?chainId=56&symbol=NVDA");
+    ).toBe("2026-10-09T12:00:00.000ZGET/build/api/v1/dex/market/rwa/price?binanceChainId=56");
   });
 
   it("defaults the body to the empty string, not to '{}' or 'null'", () => {
@@ -66,7 +72,7 @@ describe("assertSignable", () => {
   const valid = {
     timestamp: "2026-10-09T12:00:00.000Z",
     method: "GET" as const,
-    requestPath: "/build/api/v1/dex/market/rwa/tokens?chainId=56",
+    requestPath: "/build/api/v1/dex/market/rwa/tokens?binanceChainId=56",
   };
 
   it("accepts a well-formed GET", () => {
@@ -106,7 +112,7 @@ describe("assertSignable", () => {
 
   it("allows a POST to carry a body", () => {
     expect(() =>
-      assertSignable({ ...valid, method: "POST", body: '{"chainId":56}' }),
+      assertSignable({ ...valid, method: "POST", body: '{"binanceChainId":56}' }),
     ).not.toThrow();
   });
 
@@ -149,8 +155,8 @@ describe("signPreHash", () => {
   });
 
   it("changes completely when one character of the pre-hash changes", () => {
-    const a = signPreHash("2026-10-09T12:00:00.000ZGET/build/x?chainId=56", secret);
-    const b = signPreHash("2026-10-09T12:00:00.000ZGET/build/x?chainId=57", secret);
+    const a = signPreHash("2026-10-09T12:00:00.000ZGET/build/x?binanceChainId=56", secret);
+    const b = signPreHash("2026-10-09T12:00:00.000ZGET/build/x?binanceChainId=57", secret);
     expect(a).not.toBe(b);
     // Hex digit 5 vs 7 is one bit. The whole digest should move.
     expect(commonPrefixLength(a, b)).toBeLessThan(8);
@@ -184,7 +190,7 @@ describe("buildQuery", () => {
 
   it("keeps zero and false, which are real values", () => {
     // `value === ""` is the guard, not `!value`.
-    expect(buildQuery({ chainId: 0 })).toBe("?chainId=0");
+    expect(buildQuery({ binanceChainId: 0 })).toBe("?binanceChainId=0");
     expect(buildQuery({ flag: false })).toBe("?flag=false");
   });
 

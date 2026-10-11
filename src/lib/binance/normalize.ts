@@ -21,6 +21,10 @@ const PROVIDER_SIGNATURES: Array<{ id: ProviderId; test: RegExp; label: string }
 
 export function detectProvider(raw: RawRwaToken): ProviderId {
   const haystack = [
+    // `platformId` is the issuer's own identifier ("bstock", "ondo") and is the
+    // most reliable signal available — it is stated, whereas everything below
+    // is inferred from prose. It leads for that reason.
+    asString((raw as Record<string, unknown>).platformId),
     asString((raw as Record<string, unknown>).provider),
     asString((raw as Record<string, unknown>).issuer),
     asString((raw as Record<string, unknown>).platform),
@@ -64,8 +68,22 @@ export function normalizeToken(
 
   if (!symbol || !name) return null;
 
-  const chainId = raw.chainId ?? numberOrNull(raw.chain) ?? DEFAULT_CHAIN_ID;
-  const contractAddress = firstString(raw.contractAddress, raw.tokenAddress, raw.address);
+  // `binanceChainId` first: it is the name upstream actually uses, in both the
+  // request parameters and the response body. The shorter `chainId` never
+  // appears in an RWA response we have observed, so leading with it meant every
+  // asset silently fell through to DEFAULT_CHAIN_ID.
+  const chainId =
+    raw.binanceChainId ?? raw.chainId ?? numberOrNull(raw.chain) ?? DEFAULT_CHAIN_ID;
+
+  // Order matters. `tokenContractAddress` is what the API sends; the other
+  // three are older spellings kept as fallbacks. With this list wrong the
+  // address came back null on every asset — see the note in `schemas.ts`.
+  const contractAddress = firstString(
+    raw.tokenContractAddress,
+    raw.contractAddress,
+    raw.tokenAddress,
+    raw.address,
+  );
 
   return {
     id: `${detectProvider(raw)}:${symbol.toLowerCase()}`,
@@ -86,7 +104,12 @@ export function normalizeToken(
     contractAddress: isEvmAddress(contractAddress) ? contractAddress : null,
     price: firstString(raw.onchainPrice, raw.onChainPrice, raw.price),
     referencePrice: firstString(raw.referencePrice, raw.underlyingPrice),
-    marketStatus: parseMarketStatus(raw.marketStatus ?? raw.status),
+    // `underlying-market` nests the session state: data.statusInfo.marketStatus.
+    // Reading only the top level meant the market state was always "unknown"
+    // on the very endpoint whose job is to report it.
+    marketStatus: parseMarketStatus(
+      raw.statusInfo?.marketStatus ?? raw.marketStatus ?? raw.status,
+    ),
     sector: firstString(raw.sector, raw.industry),
     logoUrl: firstString(raw.logoUrl, raw.iconUrl, raw.imageUrl),
     tokenRatio: firstString(raw.tokenRatio, raw.ratio),

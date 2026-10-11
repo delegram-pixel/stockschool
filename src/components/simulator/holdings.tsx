@@ -248,19 +248,23 @@ export function AllocationPanel({ valuation }: { valuation: PortfolioValuation }
     colour: SEGMENT_COLOURS[index % SEGMENT_COLOURS.length]!,
   }));
 
+  // `greaterThan(0)` rather than `isPositive()`. decimal.js's `isPositive()` is a
+  // sign test, so it is true for an empty portfolio's zero denominator — and
+  // `0 / 0` is NaN, which the filter below keeps and the legend then renders as
+  // "NaN%". This is the same defect `valuePortfolio` had in the engine.
   const denominator = slices.reduce((sum, slice) => sum.plus(slice.value), valuation.cash);
 
   const segments = [
     ...slices.map((slice) => ({
       ...slice,
-      weight: denominator.isPositive() ? slice.value.div(denominator).times(100) : null,
+      weight: denominator.greaterThan(0) ? slice.value.div(denominator).times(100) : null,
     })),
     {
       key: "__cash__",
       label: "Cash",
       value: valuation.cash,
       colour: "bg-line-strong",
-      weight: denominator.isPositive() ? valuation.cash.div(denominator).times(100) : null,
+      weight: denominator.greaterThan(0) ? valuation.cash.div(denominator).times(100) : null,
     },
   ].filter((segment): segment is typeof segment & { weight: Decimal } => segment.weight !== null);
 

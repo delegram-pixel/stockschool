@@ -13,11 +13,28 @@ import {
  * the payload. No normalisation happens here — that is `normalize.ts`'s job, so
  * the two concerns can be tested independently.
  *
- * Endpoint coverage (8 of the documented set, per hackathon scoring §5):
- *   RWA Data : /dex/market/rwa/{tokens,search,price,underlying-profile,underlying-market}
- *   Trading  : /dex/aggregator/quote
- *   Wallet   : /wallet/token-balances
- *   Tx       : /tx/simulate
+ * Endpoint coverage — six endpoints, verified against the live API on
+ * 2026-10-11 by signing requests directly and reading the responses.
+ *
+ * Two endpoints this file used to carry are NOT part of this API. Both return
+ * `404 {"msg":"No static resource build/…"}` — a Spring "no such route"
+ * message, which is how you can tell a wrong path from a wrong parameter:
+ *
+ *   /wallet/token-balances   → 404
+ *   /tx/simulate             → 404
+ *
+ * They were removed rather than left in place to fail quietly. The wallet and
+ * transaction groups this product's README advertised do not exist here; the
+ * On-Chain Lab covers that ground over public BSC JSON-RPC instead, which
+ * needs no credentials at all.
+ *
+ *   RWA Data : /dex/market/rwa/tokens, /search, /price, /underlying-market
+ *   Trading  : /dex/aggregator/quote — needs `userWalletAddress` for Ondo RFQ
+ *
+ * One trap worth naming: every endpoint here takes `binanceChainId`, not
+ * `chainId`. The wrong spelling returns HTTP 200 with `code: 40001` and the
+ * message "Parameter binanceChainId is required" — a success status carrying a
+ * failure body, which is why the client's envelope check matters.
  */
 
 /**
@@ -42,7 +59,13 @@ export async function fetchRwaTokens(
 ): Promise<UpstreamResult<RawRwaToken[]>> {
   const result = await request("/api/v1/dex/market/rwa/tokens", {
     label: "rwa/tokens",
-    query: { chainId },
+    // The parameter is `binanceChainId`, not `chainId` — every other RWA
+    // endpoint rejects the shorter spelling with a 40001. This one is the
+    // exception: it ignores the chain filter entirely and returns the same
+    // payload for `?binanceChainId=56`, `?chainId=56` and a bare `?`. It is
+    // sent anyway so the call matches the documented contract, but do not
+    // read the returned list as having been filtered by chain.
+    query: { binanceChainId: chainId },
   });
   if (!result.ok) return result;
 
@@ -66,11 +89,27 @@ export async function searchRwa(
 ): Promise<UpstreamResult<RawRwaToken[]>> {
   const result = await request("/api/v1/dex/market/rwa/search", {
     label: "rwa/search",
-    query: { keyword, chainId },
+    query: { keyword, binanceChainId: chainId },
   });
   if (!result.ok) return result;
 
-  const raw = extractList(result.data.data);
+  // Search returns *companies*, not tokens. Each item looks like:
+  //
+  //   { ticker: "TSLA", companyName: "Tesla, Inc.",
+  //     assets: [ { tokenSymbol: "TSLAon", tokenContractAddress: "0x2494…" } ] }
+  //
+  // and the tokens live one level down inside `assets`. This function used to
+  // parse the top-level items as tokens, which meant every result failed
+  // `rawRwaToken` validation (there is no `tokenContractAddress` on a company)
+  // and search returned an empty list while reporting success. Flatten first.
+  //
+  // The `[item]` fallback keeps the older flat shape working, in case the
+  // endpoint ever returns it again.
+  const raw = extractList(result.data.data).flatMap((item) => {
+    const assets = (item as { assets?: unknown }).assets;
+    return Array.isArray(assets) ? assets : [item];
+  });
+
   const good = raw
     .map((item) => rawRwaToken.safeParse(item))
     .filter((p) => p.success)
@@ -80,34 +119,62 @@ export async function searchRwa(
 }
 
 /**
- * Price for one symbol. Returns both the on-chain and reference price when
- * upstream provides them — this is the pair the whole "Find the Premium"
- * mission is built on.
+ * Prices for one or more contracts. Returns both the on-chain and reference
+ * price when upstream provides them — this is the pair the whole "Find the
+ * Premium" mission is built on.
+ *
+ * Three things were wrong with this call. The parameter is
+ * `tokenContractAddresses` — plural, and addresses, not tickers — and the chain
+ * parameter is `binanceChainId`. The old version sent `{ symbol, chainId }`, so
+ * every call returned `40001 Parameter binanceChainId is required` while
+ * carrying HTTP 200. No price was ever fetched.
+ *
+ * Addresses are comma-joined because that is how upstream takes several in one
+ * request, which is the reason the parameter is plural in the first place.
  */
-export async function fetchRwaPrice(
-  symbol: string,
+export async function fetchRwaPrices(
+  contractAddresses: string[],
   chainId: number = DEFAULT_CHAIN_ID,
-): Promise<UpstreamResult<RawRwaToken | null>> {
+): Promise<UpstreamResult<RawRwaToken[]>> {
   const result = await request("/api/v1/dex/market/rwa/price", {
     label: "rwa/price",
-    query: { symbol, chainId },
+    query: {
+      binanceChainId: chainId,
+      tokenContractAddresses: contractAddresses.join(","),
+    },
     // Prices are the one thing worth refreshing often.
     revalidate: 30,
   });
   if (!result.ok) return result;
 
-  const object = extractObject(result.data.data);
-  const parsed = rawRwaToken.safeParse(object ?? {});
-  return { ok: true, data: { ...result.data, data: parsed.success ? parsed.data : null } };
+  // A plural parameter probably returns a list, but a single address has not
+  // been observed and may come back bare. Accept both rather than guess: an
+  // empty list would read as "this asset has no price", which is a different
+  // and much worse claim than "we could not parse the response".
+  const list = extractList(result.data.data);
+  const candidates = list.length > 0 ? list : [extractObject(result.data.data)];
+  const good = candidates
+    .filter((item) => item !== null && item !== undefined)
+    .map((item) => rawRwaToken.safeParse(item))
+    .filter((p) => p.success)
+    .map((p) => p.data);
+
+  return { ok: true, data: { ...result.data, data: good } };
 }
 
 /** Company profile for the underlying equity: sector, industry, description. */
 export async function fetchUnderlyingProfile(
-  symbol: string,
+  contractAddress: string,
+  chainId: number = DEFAULT_CHAIN_ID,
 ): Promise<UpstreamResult<Record<string, unknown> | null>> {
   const result = await request("/api/v1/dex/market/rwa/underlying-profile", {
     label: "rwa/underlying-profile",
-    query: { symbol },
+    // Needs BOTH parameters, and the identifier is an address. Sending only
+    // `symbol` produced `40001 Parameter binanceChainId is required`; sending
+    // only `binanceChainId` produced `40001 Parameter tokenContractAddress is
+    // required`. The API names the next missing parameter each time, so this
+    // took two round trips to discover.
+    query: { binanceChainId: chainId, tokenContractAddress: contractAddress },
     // Company metadata changes rarely; cache it hard.
     revalidate: 3600,
   });
@@ -125,11 +192,16 @@ export async function fetchUnderlyingProfile(
 
 /** Fundamentals for the underlying equity: market cap, volume, session state. */
 export async function fetchUnderlyingMarket(
-  symbol: string,
+  contractAddress: string,
+  chainId: number = DEFAULT_CHAIN_ID,
 ): Promise<UpstreamResult<Record<string, unknown> | null>> {
   const result = await request("/api/v1/dex/market/rwa/underlying-market", {
     label: "rwa/underlying-market",
-    query: { symbol },
+    // Verified working: `?binanceChainId=56&tokenContractAddress=0x2494…`
+    // returns `{ platformId, assetType, statusInfo: { openState, marketStatus,
+    // reasonCode, … } }`. Note the session state is nested — `normalizeToken`
+    // has to read `statusInfo.marketStatus`, not `marketStatus`.
+    query: { binanceChainId: chainId, tokenContractAddress: contractAddress },
     revalidate: 120,
   });
   if (!result.ok) return result;
@@ -167,15 +239,27 @@ export async function fetchSwapQuote(params: {
   fromTokenAddress: string;
   toTokenAddress: string;
   amount: string;
+  /**
+   * Required, despite reading like an optional extra. Upstream routes some
+   * pairs through Ondo RFQ, and those refuse to quote without a wallet:
+   * `"userWalletAddress is required for RFQ (Ondo) quote"`.
+   *
+   * This is the one genuinely awkward corner of the API for this product,
+   * because the whole design is that no wallet is ever connected. The caller
+   * must pass an address, and the honest thing to do is treat it as a stated
+   * placeholder the learner can see — not to invent a wallet silently.
+   */
+  userWalletAddress: string;
   chainId?: number;
 }): Promise<UpstreamResult<SwapQuote | null>> {
   const result = await request("/api/v1/dex/aggregator/quote", {
     label: "aggregator/quote",
     query: {
-      chainId: params.chainId ?? DEFAULT_CHAIN_ID,
+      binanceChainId: params.chainId ?? DEFAULT_CHAIN_ID,
       fromTokenAddress: params.fromTokenAddress,
       toTokenAddress: params.toTokenAddress,
       amount: params.amount,
+      userWalletAddress: params.userWalletAddress,
     },
     revalidate: 15,
   });
@@ -199,98 +283,29 @@ export async function fetchSwapQuote(params: {
 }
 
 // -----------------------------------------------------------------------------
-// Wallet & transactions
+// Wallet & transactions — REMOVED (routes do not exist)
 // -----------------------------------------------------------------------------
-
-export type WalletBalance = {
-  symbol: string;
-  address: string;
-  balance: string;
-  decimals: number | null;
-};
-
-/** Read-only holdings lookup. Never requires a signature or a connected wallet. */
-export async function fetchWalletTokenBalances(
-  address: string,
-  chainId: number = DEFAULT_CHAIN_ID,
-): Promise<UpstreamResult<WalletBalance[]>> {
-  const result = await request("/api/v1/wallet/token-balances", {
-    label: "wallet/token-balances",
-    query: { address, chainId },
-    revalidate: 15,
-  });
-  if (!result.ok) return result;
-
-  const raw = extractList(result.data.data);
-  const balances: WalletBalance[] = raw
-    .map((item) => {
-      const r = item as Record<string, unknown>;
-      const symbol = str(r.symbol ?? r.tokenSymbol);
-      const addr = str(r.address ?? r.contractAddress ?? r.tokenAddress);
-      if (!symbol || !addr) return null;
-      return {
-        symbol,
-        address: addr,
-        balance: str(r.balance ?? r.amount ?? r.value) ?? "0",
-        decimals: num(r.decimals),
-      };
-    })
-    .filter((b): b is WalletBalance => b !== null);
-
-  return { ok: true, data: { ...result.data, data: balances } };
-}
-
-export type SimulationOutcome = {
-  /** Whether the hypothetical transaction would succeed. */
-  success: boolean | null;
-  /** Gas the transaction would consume. Educational, not billed. */
-  gasUsed: string | null;
-  /** Upstream's revert reason, if the call would fail. */
-  revertReason: string | null;
-};
-
-/**
- * Dry-run a transaction. Paired with the wallet balance endpoint, this is how
- * the On-Chain Lab explains "this is what the chain would say" without ever
- * asking the user to sign anything.
- */
-export async function simulateTransaction(payload: {
-  chainId?: number;
-  from: string;
-  to: string;
-  data?: string;
-  value?: string;
-}): Promise<UpstreamResult<SimulationOutcome | null>> {
-  const result = await request("/api/v1/tx/simulate", {
-    label: "tx/simulate",
-    method: "POST",
-    revalidate: 0,
-    body: {
-      chainId: payload.chainId ?? DEFAULT_CHAIN_ID,
-      from: payload.from,
-      to: payload.to,
-      data: payload.data ?? "0x",
-      value: payload.value ?? "0",
-    },
-  });
-  if (!result.ok) return result;
-
-  const object = extractObject(result.data.data) as Record<string, unknown> | null;
-  if (!object) return { ok: true, data: { ...result.data, data: null } };
-
-  const success = object.success ?? object.simulateSuccess ?? object.status;
-  return {
-    ok: true,
-    data: {
-      ...result.data,
-      data: {
-        success: typeof success === "boolean" ? success : str(success) === "success" ? true : null,
-        gasUsed: str(object.gasUsed ?? object.gas),
-        revertReason: str(object.revertReason ?? object.reason ?? object.errorMessage),
-      },
-    },
-  };
-}
+//
+// This file used to export `fetchWalletTokenBalances` and `simulateTransaction`
+// against `/api/v1/wallet/token-balances` and `/api/v1/tx/simulate`. Neither
+// route exists. Both answer:
+//
+//   404 {"msg":"No static resource build/api/v1/wallet/token-balances."}
+//   404 {"msg":"No static resource build/api/v1/tx/simulate."}
+//
+// "No static resource" is Spring's unmatched-route message, which is how you
+// tell a wrong path from a wrong parameter. No query string would have made
+// these work.
+//
+// This product never needed them. The On-Chain Lab reads name, symbol,
+// decimals and totalSupply over public BSC JSON-RPC
+// (`src/lib/blockchain/token-reader.ts`) — no credentials, no key policy, and
+// it keeps working when this API is unreachable. Removing these deletes two
+// probes that could only ever return 404.
+//
+// README and the hackathon notes must be corrected to match: this integration
+// covers six endpoints across two API groups (RWA Data, Trading), not eight
+// across three.
 
 // -----------------------------------------------------------------------------
 // helpers
@@ -300,9 +315,4 @@ function str(value: unknown): string | null {
   if (value === null || value === undefined) return null;
   const s = String(value).trim();
   return s === "" ? null : s;
-}
-
-function num(value: unknown): number | null {
-  const n = Number(value);
-  return Number.isFinite(n) ? n : null;
 }

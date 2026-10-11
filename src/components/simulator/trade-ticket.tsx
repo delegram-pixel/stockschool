@@ -114,11 +114,15 @@ export function TradeTicket({
       : null;
   const priceImpact = gross && otherGross ? gross.minus(otherGross) : null;
 
+  // `greaterThan(0)`, not `isPositive()`: zero carries a positive sign in
+  // decimal.js, so `isPositive()` is true for the string "0" and this button
+  // would invite an order for nothing. The engine's validation is the backstop;
+  // the point is not to offer the order in the first place.
   const canSubmit =
-    hydrated && asset !== null && priceDecimal !== null && quantityDecimal !== null && quantityDecimal.isPositive();
+    hydrated && asset !== null && priceDecimal !== null && quantityDecimal !== null && quantityDecimal.greaterThan(0);
 
   function applyFraction(fraction: number) {
-    if (!priceDecimal || !priceDecimal.isPositive()) return;
+    if (!priceDecimal || !priceDecimal.greaterThan(0)) return;
 
     const available = side === "buy" ? cash : heldQuantity;
     const target = available.times(fraction);
@@ -317,7 +321,7 @@ export function TradeTicket({
             <>
               Holding:{" "}
               <span className="font-mono text-ink-muted">
-                {heldQuantity.isPositive()
+                {heldQuantity.greaterThan(0)
                   ? `${trim(heldQuantity)} ${asset?.symbol ?? ""}`
                   : "nothing yet"}
               </span>

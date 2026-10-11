@@ -1,5 +1,5 @@
 import {
-  fetchRwaPrice,
+  fetchRwaPrices,
   fetchRwaTokens,
   fetchUnderlyingMarket,
   fetchUnderlyingProfile,
@@ -59,10 +59,21 @@ export class BinanceRwaProvider implements TokenizedStockProvider {
   }
 
   async getPrice(symbol: string): Promise<Result<PriceData | null>> {
-    const result = await fetchRwaPrice(symbol, this.chainId);
+    // The price endpoint takes contract ADDRESSES, not tickers — the parameter
+    // is literally `tokenContractAddresses`. So resolve the symbol to an
+    // address first. `getAssets` is cached, so this lookup is normally free.
+    //
+    // The old version passed the symbol straight through, which upstream
+    // rejected with `40001 Parameter binanceChainId is required`; no price was
+    // ever fetched and the Explore page never showed a live number.
+    const asset = await this.getAsset(symbol);
+    if (!asset.ok) return asset;
+    if (!asset.data?.contractAddress) return { ok: true, data: null };
+
+    const result = await fetchRwaPrices([asset.data.contractAddress], this.chainId);
     if (!result.ok) return { ok: false, error: result.error };
 
-    const raw = result.data.data;
+    const raw = result.data.data[0];
     if (!raw) return { ok: true, data: null };
 
     const provenance = provenanceFrom(result.data.fetchedAt);
@@ -75,24 +86,34 @@ export class BinanceRwaProvider implements TokenizedStockProvider {
         price: normalized.price,
         referencePrice: normalized.referencePrice,
         currency: "USD",
-        // Only what upstream actually stated. Never inferred from a price.
-        marketStatus: parseMarketStatus(raw.marketStatus ?? raw.status),
+        // The session state lives at `statusInfo.marketStatus` on the market
+        // endpoint, so check the nested path before the flat one.
+        marketStatus: parseMarketStatus(
+          raw.statusInfo?.marketStatus ?? raw.marketStatus ?? raw.status,
+        ),
         provenance: normalized.provenance,
       },
     };
   }
 
   async getUnderlyingProfile(symbol: string): Promise<Result<Record<string, unknown> | null>> {
-    const result = await fetchUnderlyingProfile(symbol);
-    if (!result.ok) return { ok: false, error: result.error };
+    // Same resolution as `getPrice`: this endpoint needs a contract address and
+    // a chain id, and takes both as `tokenContractAddress` / `binanceChainId`.
+    const asset = await this.getAsset(symbol);
+    if (!asset.ok) return asset;
+    if (!asset.data?.contractAddress) return { ok: true, data: null };
 
-    // Merge in the sector we may already have from the token record, so the
-    // detail page has something to show even if this endpoint is sparse.
+    const result = await fetchUnderlyingProfile(asset.data.contractAddress, this.chainId);
+    if (!result.ok) return { ok: false, error: result.error };
     return { ok: true, data: result.data.data };
   }
 
   async getUnderlyingMarket(symbol: string): Promise<Result<Record<string, unknown> | null>> {
-    const result = await fetchUnderlyingMarket(symbol);
+    const asset = await this.getAsset(symbol);
+    if (!asset.ok) return asset;
+    if (!asset.data?.contractAddress) return { ok: true, data: null };
+
+    const result = await fetchUnderlyingMarket(asset.data.contractAddress, this.chainId);
     if (!result.ok) return { ok: false, error: result.error };
     return { ok: true, data: result.data.data };
   }

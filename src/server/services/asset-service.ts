@@ -1,8 +1,14 @@
 import { cache } from "react";
 import { BinanceRwaProvider } from "@/lib/providers/binance-provider";
 import { explainError } from "@/lib/binance/client";
+import {
+  readCompanyProfile,
+  readUnderlyingMarket,
+  type CompanyProfile,
+  type UnderlyingMarket,
+} from "@/lib/binance/fundamentals";
 import { getSampleAssets, getSampleAsset, getSampleProvenance } from "@/lib/binance/sample-data";
-import type { DataProvenance, ProviderError, TokenizedStock } from "@/types";
+import type { DataProvenance, PriceData, ProviderError, TokenizedStock } from "@/types";
 
 /**
  * The asset service — the single seam between "where data comes from" and
@@ -149,23 +155,54 @@ export const getAssetBySymbol = cache(async (symbol: string): Promise<AssetLooku
   return null;
 });
 
-/** Search across the current feed. Used by the explorer's client filter. */
+/**
+ * Search, from two sources in a deliberate order.
+ *
+ *  1. **The catalogue we already hold.** Instant, free, and correct for the
+ *     common case: a learner typing into the explorer's filter box while the feed
+ *     is already on screen.
+ *  2. **`/rwa/search`.** Consulted *only* when the local filter comes up empty.
+ *
+ * The order is the design, not an optimisation. The catalogue is paginated and
+ * can be truncated, so "nothing local matched" is a much weaker claim than "no
+ * such asset exists" — and the search endpoint is the one that can actually
+ * answer the second question. Asking it only on a miss keeps the fast path fast
+ * and stops every keystroke from costing a network round trip, while still
+ * letting a learner find a stock the catalogue page did not carry.
+ *
+ * A miss that upstream also cannot fill stays a miss, carrying the feed's own
+ * provenance and degradation untouched.
+ */
 export const searchAssets = cache(async (keyword: string): Promise<AssetFeed> => {
   const feed = await getAssetFeed();
   const q = keyword.trim().toLowerCase();
   if (!q) return feed;
 
-  return {
-    ...feed,
-    assets: feed.assets.filter(
-      (asset) =>
-        asset.symbol.toLowerCase().includes(q) ||
-        asset.name.toLowerCase().includes(q) ||
-        asset.companyName?.toLowerCase().includes(q) ||
-        asset.underlyingSymbol?.toLowerCase().includes(q) ||
-        asset.sector?.toLowerCase().includes(q),
-    ),
-  };
+  const local = feed.assets.filter(
+    (asset) =>
+      asset.symbol.toLowerCase().includes(q) ||
+      asset.name.toLowerCase().includes(q) ||
+      asset.companyName?.toLowerCase().includes(q) ||
+      asset.underlyingSymbol?.toLowerCase().includes(q) ||
+      asset.sector?.toLowerCase().includes(q),
+  );
+
+  if (local.length > 0) return { ...feed, assets: local };
+
+  // Nothing local. In sample mode there is no upstream to ask — and asking would
+  // turn a labelled sample-data screen into an error banner for no gain.
+  if (feed.mode !== "live" || !provider.isConfigured()) {
+    return { ...feed, assets: local };
+  }
+
+  const result = await provider.search(keyword);
+  if (!result.ok || result.data.length === 0) {
+    // Upstream had no better answer than we did. Keep the empty result rather
+    // than resurrecting the whole catalogue, which would look like a match.
+    return { ...feed, assets: local };
+  }
+
+  return { ...feed, assets: result.data };
 });
 
 /** Distinct sectors present in the feed, for the explorer's filter chips. */
@@ -177,3 +214,63 @@ export async function getSectors(): Promise<string[]> {
   }
   return [...sectors].sort();
 }
+
+// -----------------------------------------------------------------------------
+// One asset, in depth
+// -----------------------------------------------------------------------------
+
+export type AssetDetail = AssetLookup & {
+  /**
+   * The freshest price pair, from `/rwa/price` — the endpoint the whole course
+   * is built on. `null` when it did not answer; the caller then falls back to
+   * the pair carried by the list payload, which is older but real.
+   */
+  quote: PriceData | null;
+  /** Session state and fundamentals from `/rwa/underlying-market`. */
+  market: UnderlyingMarket | null;
+  /** Company detail from `/rwa/underlying-profile`. */
+  profile: CompanyProfile | null;
+};
+
+/**
+ * The detail page's data.
+ *
+ * Three endpoints beyond the catalogue, because the catalogue alone cannot answer
+ * the questions the page asks: *is the underlying market open right now*, *how
+ * big is this company*, and *what does it actually do*. Those are three different
+ * endpoints, and each one is allowed to fail on its own.
+ *
+ * That independence is the important part. A missing company profile must not
+ * cost the page its price, and a failed price call must not cost it the
+ * company — so the three run concurrently and are read separately, rather than
+ * being chained behind one another.
+ *
+ * Each of the three resolves the symbol to a contract address by reading the
+ * catalogue, so all three ask for `/rwa/tokens` at once. That is one wire request,
+ * not three: the calls are identical and carry identical `next` options, so
+ * Next's fetch deduplication collapses them inside the render pass.
+ */
+export const getAssetDetail = cache(async (symbol: string): Promise<AssetDetail | null> => {
+  const lookup = await getAssetBySymbol(symbol);
+  if (!lookup) return null;
+
+  // Only the live provider can answer these. In sample mode there is nothing to
+  // ask, and asking anyway would produce a NOT_CONFIGURED error rendered as a
+  // degradation banner — noise on a screen that is already honestly labelled.
+  if (lookup.mode !== "live" || !provider.isConfigured()) {
+    return { ...lookup, quote: null, market: null, profile: null };
+  }
+
+  const [quote, marketResult, profileResult] = await Promise.all([
+    provider.getPrice(symbol),
+    provider.getUnderlyingMarket(symbol),
+    provider.getUnderlyingProfile(symbol),
+  ]);
+
+  return {
+    ...lookup,
+    quote: quote.ok ? quote.data : null,
+    market: marketResult.ok ? readUnderlyingMarket(marketResult.data) : null,
+    profile: profileResult.ok ? readCompanyProfile(profileResult.data) : null,
+  };
+});

@@ -21,7 +21,13 @@ import { ProviderError, type Result } from "@/types";
  * reproducible by anyone reading the repo.
  */
 
-const BASE_URL = (process.env.BINANCE_WEB3_BASE_URL ?? "https://api.web3.binance.com").replace(
+// The fallback is the same host the portal lives on, because that is where the
+// API lives too. It used to read `https://api.web3.binance.com`, a host that
+// appears in no documentation and does not resolve — so any deployment that
+// forgot to set BINANCE_WEB3_BASE_URL would have failed with a DNS error that
+// reads exactly like a credentials problem. A wrong default is worse than no
+// default: it fails in a way that sends you looking in the wrong place.
+const BASE_URL = (process.env.BINANCE_WEB3_BASE_URL ?? "https://web3.binance.com").replace(
   /\/+$/,
   "",
 );

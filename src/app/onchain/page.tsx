@@ -34,11 +34,28 @@ export const metadata: Metadata = {
 export default async function OnChainLabPage() {
   const feed = await getAssetFeed();
 
+  // The example addresses are offered only when the feed is live, because only
+  // then are they real.
+  //
+  // Under sample data `contractAddress` is a placeholder — ten generated hex
+  // strings in an arithmetic progression, each one the previous shifted by a
+  // single digit. They are 40 characters, so they pass `isAddress()` and reach
+  // the network; they do not exist, so `getBytecode` returns "0x" and the
+  // learner is told there is no contract at that address. The heading above
+  // them nonetheless read "These are real mainnet addresses", which was the one
+  // claim this page exists to make good on. A verification tool that
+  // editorialises is not a verification tool; one that fabricates is worse.
+  //
+  // The form still works either way. A real address, brought by the reader, is
+  // a real read — the read has never depended on the feed. What changes is only
+  // whether we supply the address.
+  const feedIsLive = feed.provenance.source !== "mock";
+
   // Only tokens that actually name a contract, and only a handful: this is a
   // doorway, not a second explorer.
-  const examples = feed.assets
-    .filter((asset) => asset.contractAddress !== null)
-    .slice(0, 6);
+  const examples = feedIsLive
+    ? feed.assets.filter((asset) => asset.contractAddress !== null).slice(0, 6)
+    : [];
 
   const chains = supportedChains();
   const mode = rpcMode();
@@ -66,11 +83,14 @@ export default async function OnChainLabPage() {
         <AddressForm chains={chains} defaultChainId={DEFAULT_CHAIN} />
       </div>
 
-      {examples.length > 0 && (
+      {examples.length > 0 ? (
         <div className="mt-12 border-t border-line pt-8">
           <p className="font-mono text-[0.625rem] uppercase tracking-[0.14em] text-ink-subtle">
             Or start from one of these
           </p>
+          {/* True by construction now, not by assertion: `examples` is empty
+              unless the feed is live, so reaching this paragraph means the
+              addresses below came from the API rather than from sample data. */}
           <p className="mt-2 max-w-2xl text-[0.875rem] leading-relaxed text-ink-muted">
             Contracts for tokens currently in the feed. These are real mainnet addresses — opening
             one runs a genuine read against the live network.
@@ -99,6 +119,27 @@ export default async function OnChainLabPage() {
               </li>
             ))}
           </ul>
+        </div>
+      ) : (
+        <div className="mt-12 border-t border-line pt-8">
+          <p className="font-mono text-[0.625rem] uppercase tracking-[0.14em] text-ink-subtle">
+            Bring your own address
+          </p>
+          <p className="mt-2 max-w-2xl text-[0.875rem] leading-relaxed text-ink-muted">
+            We are not suggesting contracts today. This deployment has no live token feed, so we
+            have no addresses we have actually checked — and printing a list we cannot vouch for
+            would be a poor joke on this page in particular. Find a token you are curious about on{" "}
+            <a
+              href="https://bscscan.com/tokens"
+              target="_blank"
+              rel="noreferrer noopener"
+              className="text-teal-strong underline decoration-teal/40 underline-offset-2 transition-colors hover:decoration-teal"
+            >
+              BscScan
+            </a>
+            , paste its address above, and this page will read it from the live network. That read
+            has never depended on the feed.
+          </p>
         </div>
       )}
 

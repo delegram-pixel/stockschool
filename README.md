@@ -43,7 +43,7 @@ Two rules shape everything:
 | Framework | Next.js 15 (App Router, React Server Components) · React 19 |
 | Language | TypeScript, `strict` + `noUncheckedIndexedAccess` |
 | Styling | Tailwind CSS v4 (CSS-first `@theme`) |
-| Data | Binance Web3 API (8 endpoints, HMAC-SHA256 signed) |
+| Data | Binance Web3 API (6 endpoints, HMAC-SHA256 signed) |
 | Database | PostgreSQL + Prisma (Neon-compatible) |
 | Chain reads | `viem` (read-only `eth_call`) |
 | Numeric | `decimal.js` — never float, anywhere near money |
@@ -130,6 +130,7 @@ yarn lint           # eslint
 yarn typecheck      # prisma generate && tsc --noEmit
 yarn test           # vitest
 yarn test:e2e       # playwright
+yarn probe          # sign and call the Binance Web3 API directly
 yarn db:studio      # browse the database
 ```
 
@@ -137,38 +138,70 @@ yarn db:studio      # browse the database
 
 ## Binance Web3 API Endpoints Used
 
-**Eight endpoints across all three API groups** (the requirement is three).
+**Six endpoints across two API groups**, every one verified against the live API
+on 2026-10-11 by signing requests directly and reading the responses. The
+requirement is three.
 
-### RWA Data — all five
+### RWA Data — five
 
-| Endpoint | Used for |
+| Endpoint | Where it lands |
 | --- | --- |
-| `GET /api/v1/dex/market/rwa/tokens` | The catalogue that populates Explore |
-| `GET /api/v1/dex/market/rwa/search` | Find a stock by ticker or company name |
-| `GET /api/v1/dex/market/rwa/price` | **On-chain *and* reference price.** The core teaching signal |
-| `GET /api/v1/dex/market/rwa/underlying-profile` | Company behind the token — sector, industry, description |
-| `GET /api/v1/dex/market/rwa/underlying-market` | Fundamentals — market cap, volume, session state |
+| `GET /api/v1/dex/market/rwa/tokens` | The catalogue. Populates Explore, and backs every symbol lookup on the site |
+| `GET /api/v1/dex/market/rwa/price` | The price pair on `/stocks/[symbol]` — refreshes the pair the catalogue reported |
+| `GET /api/v1/dex/market/rwa/underlying-market` | Session state and fundamentals on `/stocks/[symbol]` |
+| `GET /api/v1/dex/market/rwa/underlying-profile` | The "what the underlying business does" section on `/stocks/[symbol]` |
+| `GET /api/v1/dex/market/rwa/search` | Asked by the explorer's search when the local catalogue has no match |
+
+The detail page calls three of these concurrently, each independent — so a missing
+company profile costs you the company section and nothing else. See
+[`ARCHITECTURE.md`](./ARCHITECTURE.md).
+
+Three of these take **contract addresses**, not tickers, and all five take
+`binanceChainId` — not `chainId`. Both facts cost us an evening; see
+[`DX_NOTES.md`](./DX_NOTES.md).
 
 ### Trading
 
-| Endpoint | Used for |
+| Endpoint | Where it lands |
 | --- | --- |
-| `GET /api/v1/dex/aggregator/quote` | "What would this swap cost?" and the route. **Never executed.** |
+| `GET /api/v1/dex/aggregator/quote` | **Integrated and verified, not yet surfaced.** A typed wrapper exists and has been called successfully; no screen consumes it yet, because it requires a `userWalletAddress` and this product never connects a wallet. See the note below. |
 
-### Wallet & Transaction
+`fetchSwapQuote` is the one place in the codebase where the API's shape and the
+product's promise pull against each other. The parameter is required, the product
+forbids wallets, and the honest resolution is to make the caller supply an address
+explicitly rather than invent one — which is what the signature does. It stays
+unwired until there is a screen that can show a learner what address is being
+used and why. Calling it "used" in the meantime would be the kind of claim this
+whole repository is built to avoid.
 
-| Endpoint | Used for |
-| --- | --- |
-| `GET /api/v1/wallet/token-balances` | Read-only holdings. No signature, no wallet connection |
-| `POST /api/v1/tx/simulate` | Dry-run a transaction to see what the chain *would* say |
+### Two endpoints this README used to list, which do not exist
 
-**Deliberately not used:** `GET /api/v1/dex/swap` and `POST /api/v1/tx/broadcast`.
-These construct and broadcast signed transactions. StockSchool's simulator must
-never execute a real trade, so the product stays read-and-simulate and takes the
-lower endpoint count on purpose.
+An earlier revision claimed eight endpoints across three API groups. Two of them
+were never part of the API. Both return:
 
-**Chains:** BNB Smart Chain (`56`, default) · Ethereum (`1`) · Base (`8453`) ·
-Solana (`CT_501`).
+```text
+404 {"msg":"No static resource build/api/v1/wallet/token-balances."}
+404 {"msg":"No static resource build/api/v1/tx/simulate."}
+```
+
+`No static resource` is Spring's unmatched-route message, which is how you tell a
+wrong path from a wrong parameter — no combination of query strings would have
+made either work. They have been deleted from the client rather than left in
+place to fail quietly, and the claim is corrected here rather than left standing.
+
+The ground they were meant to cover — reading balances, dry-running a call — is
+covered by the On-Chain Lab instead, which reads contracts over public BSC
+JSON-RPC with no credentials at all. For a product whose entire premise is that
+you should be able to check things yourself, that is the better answer anyway.
+
+**Deliberately not used:** any endpoint that constructs or broadcasts a signed
+transaction. StockSchool's simulator must never execute a real trade, so the
+product stays read-and-simulate and takes the lower endpoint count on purpose.
+
+**Chains:** BNB Smart Chain (`56`) is verified end to end. Ethereum (`1`) and
+Base (`8453`) are plumbed through the same client but have not been exercised,
+and Solana (`CT_501`) is configured but untested. We would rather say that than
+imply coverage we have not checked.
 
 ### Authentication
 
@@ -239,7 +272,7 @@ See [`ARCHITECTURE.md`](./ARCHITECTURE.md) for the reasoning. The short version:
 
 ## Project status
 
-Verified in this repository:
+**Verified in this repository:**
 
 - The signing scheme, against a known-answer pre-hash and one test per documented
   failure mode (`tests/unit/binance-signature.test.ts`).
@@ -247,10 +280,27 @@ Verified in this repository:
 - Financial maths, simulation, scoring, progress, provenance, token maths
   (`tests/unit/`).
 
-Requires credentials and a live run: end-to-end data flow against the real API.
-The integration is complete and the sample-data path is fully exercised, but no
-live call has been made with these credentials yet, and the README will not claim
-otherwise.
+**Verified against the live API** on 2026-10-11, by signing requests by hand and
+reading the responses: the paths, the parameter names, the authentication headers,
+and which of the endpoints in the brief actually exist. That exercise is what
+[`DX_NOTES.md`](./DX_NOTES.md) is made of, and it is the reason the endpoint table
+above says six rather than eight.
+
+The script that did it is committed as `scripts/probe-binance.mjs` (`yarn probe`),
+so none of the above has to be taken on trust — run it against your own key and
+compare. It is dependency-free on purpose: a probe that needs an install before it
+can tell you whether the API is reachable misses the point of a probe.
+
+**Not yet measured:** latency, call volume, and rate-limit behaviour. The live
+calls were made one at a time while diagnosing, which establishes a contract and
+says nothing about performance. [`DX_NOTES.md`](./DX_NOTES.md) §6 marks those
+cells rather than filling them in.
+
+One caveat worth stating plainly, since it is the more useful thing to know: the
+on-chain half of the product — the On-Chain Lab, and every contract read behind it
+— goes over public BSC JSON-RPC and needs no API credentials at all. It works
+whether or not the market data service is reachable, which on some networks it
+intermittently is not (§5.8).
 
 ---
 
@@ -284,11 +334,7 @@ MIT. See [`LICENSE`](./LICENSE).
      [ ] yarn build
      [ ] Fill in the three Demo links above
      [ ] Fill in the [TEAM] table in DX_NOTES.md §6 from a real keyed session
-     [ ] Replace the "Project status" paragraph once a live call has been made
      [ ] Confirm .env is NOT tracked:  git status --porcelain | grep .env
      [ ] Confirm no console.log left:  grep -rn "console\." src/
      [ ] git init && commit
      ===================================================================== -->
-# stockschool
-# stockschool
-# stockschool

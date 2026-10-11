@@ -76,9 +76,35 @@ export const rawRwaToken = z
     industry: z.string().optional(),
     chainId: chainIdish.optional(),
     chain: z.union([z.string(), z.number()]).optional(),
+    // The chain field upstream actually sends. Every RWA endpoint takes
+    // `binanceChainId` as its parameter name, and every response echoes it
+    // back under the same name — so this, not `chainId`, is the one that
+    // carries data. `chainId` is kept for older shapes.
+    binanceChainId: chainIdish.optional(),
     contractAddress: z.string().optional(),
     tokenAddress: z.string().optional(),
     address: z.string().optional(),
+    // The contract field upstream actually sends. Its absence from this list
+    // was the single most damaging bug in the integration: `normalizeToken`
+    // looked for `contractAddress`/`tokenAddress`/`address`, found none of
+    // them, and set `contractAddress: null` on every asset — so the On-Chain
+    // Lab had no real addresses to offer and every explorer link was dead.
+    tokenContractAddress: z.string().optional(),
+    // Which issuer platform the token belongs to ("bstock", "ondo"). This is
+    // the authoritative provider signal and is more reliable than guessing
+    // from the token's display name.
+    platformId: z.string().optional(),
+    assetType: numericish.optional(),
+    // Market session state arrives nested under `statusInfo` on
+    // `underlying-market`, not at the top level.
+    statusInfo: z
+      .object({
+        openState: z.union([z.boolean(), z.string()]).optional(),
+        marketStatus: z.string().optional(),
+        reasonCode: z.string().optional(),
+      })
+      .passthrough()
+      .optional(),
     price: decimalish.optional(),
     onchainPrice: decimalish.optional(),
     onChainPrice: decimalish.optional(),

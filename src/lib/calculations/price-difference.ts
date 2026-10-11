@@ -46,7 +46,12 @@ export function comparePrices(
   const reference = toDecimal(referencePrice);
 
   if (onChain === null || reference === null) return null;
-  if (!onChain.isPositive() || !reference.isPositive()) return null;
+  // The docblock above says "zero or negative → null", and this is the test that
+  // actually means that. `isPositive()` is a *sign* test and zero carries a
+  // positive sign, so it would wave a zero through — and a zero on-chain price
+  // then renders as "trading 100% below its reference price", a confident
+  // statement about a number we do not have.
+  if (!onChain.greaterThan(0) || !reference.greaterThan(0)) return null;
 
   // Below half a cent the percentage becomes noise rather than information.
   if (reference.lessThan(new Decimal("0.005"))) return null;
@@ -130,6 +135,12 @@ export function explainComparison(comparison: PriceComparison | null): string[] 
     `   $${absolute.abs().toFixed(2)} ÷ $${reference.toFixed(2)} = ${percent.div(100).abs().toFixed(4)}`,
     `Step 3 — Convert to a percentage.`,
     `   ${percent.div(100).abs().toFixed(4)} × 100 = ${percent.abs().toFixed(2)}%`,
-    `The token is trading ${percent.isNegative() ? "below" : "above"} its reference price by ${percent.abs().toFixed(2)}%.`,
+    `${
+      comparison.difference.direction === "parity"
+        ? "The token is trading at parity with its reference price."
+        : `The token is trading ${
+            comparison.difference.direction === "premium" ? "above" : "below"
+          } its reference price by ${percent.abs().toFixed(2)}%.`
+    }`,
   ];
 }
