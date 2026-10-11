@@ -306,13 +306,7 @@ intermittently is not (§5.8).
 
 ## Demo
 
-- **Deployed app:** _[add live URL]_
-- **Demo video (≤ 4 min):** _[add public link — test it in incognito]_
-- **Screenshot:**
-
-  _[add `docs/screenshot-explore.png` — the Explore page with the on-chain vs
-  reference price pair visible. That single screen communicates the product
-  faster than a paragraph.]_
+- **Deployed app:** https://stockschool-mu.vercel.app/
 
 ---
 
